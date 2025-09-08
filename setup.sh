@@ -1,12 +1,17 @@
 #!/bin/bash
 set -e
 
-# 1. Update package lists and upgrade
+# 1. Update package lists
+echo "Updating system packages..."
 sudo apt update -y && sudo apt upgrade -y
 
-# 2. Install Java JDK (OpenJDK 21)
-echo "Installing Java JDK..."
-sudo apt install -y openjdk-21-jdk
+# 2. Install Java JDK if not already installed
+if command -v java &>/dev/null; then
+    echo "Java already installed: $(java -version 2>&1 | head -n 1)"
+else
+    echo "Installing default OpenJDK..."
+    sudo apt install -y default-jdk
+fi
 
 # 3. Verify Java installation
 java -version
@@ -14,37 +19,43 @@ java -version
 # 4. Define variables for Tomcat installation
 TOMCAT_VERSION=10.1.44
 TOMCAT_DIR=/opt/tomcat
+TOMCAT_TAR=/tmp/apache-tomcat-$TOMCAT_VERSION.tar.gz
 
-# 5. Download and install Tomcat
-echo "Downloading Apache Tomcat $TOMCAT_VERSION..."
-wget https://dlcdn.apache.org/tomcat/tomcat-10/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz -P /tmp
+# 5. Download and install Tomcat if not already installed
+if [ -d "$TOMCAT_DIR" ]; then
+    echo "Tomcat already exists at $TOMCAT_DIR, skipping installation."
+else
+    echo "Downloading Apache Tomcat $TOMCAT_VERSION..."
+    wget -q https://dlcdn.apache.org/tomcat/tomcat-10/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz -O $TOMCAT_TAR
+    
+    echo "Extracting Tomcat..."
+    sudo mkdir -p $TOMCAT_DIR
+    sudo tar xzvf $TOMCAT_TAR -C $TOMCAT_DIR --strip-components=1
+    sudo chmod +x $TOMCAT_DIR/bin/*.sh
+fi
 
-echo "Extracting Tomcat..."
-sudo mkdir -p $TOMCAT_DIR
-sudo tar xzvf /tmp/apache-tomcat-$TOMCAT_VERSION.tar.gz -C $TOMCAT_DIR --strip-components=1
-
-# 6. Set executable permissions for scripts
-sudo chmod +x $TOMCAT_DIR/bin/*.sh
-
-# 7. Configure environment variables
-echo "Configuring environment variables..."
-cat << EOL | sudo tee /etc/profile.d/tomcat.sh
+# 6. Configure environment variables safely
+TOMCAT_ENV_FILE=/etc/profile.d/tomcat.sh
+if [ ! -f "$TOMCAT_ENV_FILE" ]; then
+    echo "Configuring environment variables..."
+    cat << EOL | sudo tee $TOMCAT_ENV_FILE
 export CATALINA_HOME=$TOMCAT_DIR
-export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+export JAVA_HOME=\$(dirname \$(dirname \$(readlink -f \$(which java))))
 export PATH=\$PATH:\$CATALINA_HOME/bin:\$JAVA_HOME/bin
 EOL
+fi
 
-# 8. Reload environment variables
-source /etc/profile.d/tomcat.sh
+# Reload environment variables
+source $TOMCAT_ENV_FILE
 
-# 9. Create a demo Servlet project
-echo "Creating demo Servlet project..."
+# 7. Create a demo Servlet project (skip if exists)
 PROJECT_DIR=~/DemoServlet
-mkdir -p $PROJECT_DIR/{src,WEB-INF/classes}
-cd $PROJECT_DIR
-
-# 10. Servlet source code
-cat << EOL > src/HelloServlet.java
+if [ ! -d "$PROJECT_DIR" ]; then
+    echo "Creating demo Servlet project..."
+    mkdir -p $PROJECT_DIR/{src,WEB-INF/classes}
+    
+    # Servlet source code
+    cat << 'EOL' > $PROJECT_DIR/src/HelloServlet.java
 import java.io.*;
 import jakarta.servlet.*;
 import jakarta.servlet.http.*;
@@ -60,9 +71,9 @@ public class HelloServlet extends HttpServlet {
 }
 EOL
 
-# 11. web.xml configuration
-mkdir -p WEB-INF
-cat << EOL > WEB-INF/web.xml
+    # web.xml configuration
+    mkdir -p $PROJECT_DIR/WEB-INF
+    cat << 'EOL' > $PROJECT_DIR/WEB-INF/web.xml
 <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="https://jakarta.ee/xml/ns/jakartaee
@@ -78,24 +89,34 @@ cat << EOL > WEB-INF/web.xml
     </servlet-mapping>
 </web-app>
 EOL
+fi
 
-# 12. Compile the Servlet
-echo "Compiling HelloServlet..."
-javac -cp $CATALINA_HOME/lib/jakarta.servlet-api.jar -d WEB-INF/classes src/HelloServlet.java
+# 8. Compile the Servlet if not already compiled
+if [ ! -f "$PROJECT_DIR/WEB-INF/classes/HelloServlet.class" ]; then
+    echo "Compiling HelloServlet..."
+    javac -cp $CATALINA_HOME/lib/jakarta.servlet-api.jar -d $PROJECT_DIR/WEB-INF/classes $PROJECT_DIR/src/HelloServlet.java
+fi
 
-# 13. Package the application into a WAR file
-echo "Packaging the project into DemoApp.war..."
-cd WEB-INF/classes
-jar cvf ~/DemoServlet/DemoApp.war ./*
-mv ~/DemoServlet/DemoApp.war $TOMCAT_HOME
-cd ~/DemoServlet
+# 9. Package the application into a WAR file
+WAR_FILE=$PROJECT_DIR/DemoApp.war
+if [ ! -f "$WAR_FILE" ]; then
+    echo "Packaging the project into DemoApp.war..."
+    cd $PROJECT_DIR
+    jar cvf DemoApp.war -C WEB-INF .
+fi
 
-# 14. Deploy the WAR
-echo "Deploying DemoApp.war to Tomcat..."
-sudo cp DemoApp.war $CATALINA_HOME/webapps/
+# 10. Deploy the WAR if not already deployed
+if [ ! -f "$CATALINA_HOME/webapps/DemoApp.war" ]; then
+    echo "Deploying DemoApp.war to Tomcat..."
+    sudo cp $WAR_FILE $CATALINA_HOME/webapps/
+fi
 
-# 15. Start Tomcat
-echo "Starting Tomcat..."
-$CATALINA_HOME/bin/startup.sh
+# 11. Start Tomcat (only if not running)
+if pgrep -f "org.apache.catalina.startup.Bootstrap" > /dev/null; then
+    echo "Tomcat is already running."
+else
+    echo "Starting Tomcat..."
+    $CATALINA_HOME/bin/startup.sh
+fi
 
-echo "Done! Visit: http://localhost:8080/DemoApp/hello to see your servlet."
+echo "✅ Setup complete! Visit: http://localhost:8080/DemoApp/hello"
