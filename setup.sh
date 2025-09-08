@@ -48,7 +48,7 @@ fi
 # Reload environment variables
 source $TOMCAT_ENV_FILE
 
-# 7. Create a demo Servlet project (skip if exists)
+# 7. Create a demo Servlet project
 PROJECT_DIR=~/DemoServlet
 if [ ! -d "$PROJECT_DIR" ]; then
     echo "Creating demo Servlet project..."
@@ -91,32 +91,35 @@ EOL
 EOL
 fi
 
-# 8. Compile the Servlet if not already compiled
-if [ ! -f "$PROJECT_DIR/WEB-INF/classes/HelloServlet.class" ]; then
+# 8. Compile the Servlet if source is newer than class
+SRC_FILE=$PROJECT_DIR/src/HelloServlet.java
+CLASS_FILE=$PROJECT_DIR/WEB-INF/classes/HelloServlet.class
+if [ ! -f "$CLASS_FILE" ] || [ "$SRC_FILE" -nt "$CLASS_FILE" ]; then
     echo "Compiling HelloServlet..."
-    javac -cp "$CATALINA_HOME/lib/*" -d $PROJECT_DIR/WEB-INF/classes $PROJECT_DIR/src/HelloServlet.java
+    javac -cp "$CATALINA_HOME/lib/*" -d $PROJECT_DIR/WEB-INF/classes $SRC_FILE
 fi
 
 # 9. Package the application into a WAR file
 WAR_FILE=$PROJECT_DIR/DemoApp.war
-if [ ! -f "$WAR_FILE" ]; then
+if [ ! -f "$WAR_FILE" ] || [ "$CLASS_FILE" -nt "$WAR_FILE" ] || [ "$PROJECT_DIR/WEB-INF/web.xml" -nt "$WAR_FILE" ]; then
     echo "Packaging the project into DemoApp.war..."
     cd $PROJECT_DIR
-    jar cvf DemoApp.war -C WEB-INF .
+    jar cvf DemoApp.war WEB-INF
 fi
 
-# 10. Deploy the WAR if not already deployed
-if [ ! -f "$CATALINA_HOME/webapps/DemoApp.war" ]; then
-    echo "Deploying DemoApp.war to Tomcat..."
-    sudo cp $WAR_FILE $CATALINA_HOME/webapps/
-fi
-
-# 11. Start Tomcat (only if not running)
-if pgrep -f "org.apache.catalina.startup.Bootstrap" > /dev/null; then
-    echo "Tomcat is already running."
-else
-    echo "Starting Tomcat..."
+# 10. Deploy the WAR (always redeploy if updated)
+DEPLOYED_WAR=$CATALINA_HOME/webapps/DemoApp.war
+if [ ! -f "$DEPLOYED_WAR" ] || [ "$WAR_FILE" -nt "$DEPLOYED_WAR" ]; then
+    echo "Redeploying DemoApp.war to Tomcat..."
+    sudo rm -rf $CATALINA_HOME/webapps/DemoApp   # remove old exploded folder
+    sudo cp -f $WAR_FILE $CATALINA_HOME/webapps/
+    
+    echo "Restarting Tomcat..."
+    $CATALINA_HOME/bin/shutdown.sh || true
+    sleep 3
     $CATALINA_HOME/bin/startup.sh
+else
+    echo "No changes detected in WAR, keeping current deployment."
 fi
 
 echo "✅ Setup complete! Visit: http://localhost:8080/DemoApp/hello"
