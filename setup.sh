@@ -94,7 +94,7 @@ fi
 # 8. Compile the Servlet if not already compiled
 if [ ! -f "$PROJECT_DIR/WEB-INF/classes/HelloServlet.class" ]; then
     echo "Compiling HelloServlet..."
-    javac -cp $CATALINA_HOME/lib/jakarta.servlet-api.jar -d $PROJECT_DIR/WEB-INF/classes $PROJECT_DIR/src/HelloServlet.java
+    javac -cp "$CATALINA_HOME/lib/*" -d $PROJECT_DIR/WEB-INF/classes $PROJECT_DIR/src/HelloServlet.java
 fi
 
 # 9. Package the application into a WAR file
