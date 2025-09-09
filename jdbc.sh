@@ -20,24 +20,6 @@ sudo apt install -y default-jdk
 echo "===== Installing Maven ====="
 sudo apt install -y maven
 
-echo "===== Installing MySQL Server ====="
-sudo apt install -y mysql-server
-
-echo "===== Starting MySQL Service ====="
-sudo systemctl enable mysql
-sudo systemctl start mysql
-
-echo "===== Creating Database and Table ====="
-sudo mysql -u root <<EOF
-CREATE DATABASE IF NOT EXISTS jdbc;
-USE jdbc;
-CREATE TABLE IF NOT EXISTS users (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    email VARCHAR(100) UNIQUE NOT NULL
-);
-EOF
-
 echo "===== Checking Java and Maven ====="
 java -version
 mvn -v
@@ -103,10 +85,12 @@ cat << 'EOL' > pom.xml
             <version>6.0.0</version>
             <scope>provided</scope>
         </dependency>
+
+        <!-- MySQL JDBC Connector -->
         <dependency>
-            <groupId>mysql</groupId>
+            <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
-            <version>9.0.0</version>
+            <version>9.4.0</version>
         </dependency>
     </dependencies>
 
@@ -149,7 +133,7 @@ public class HelloServlet extends HttpServlet {
 EOL
 
 # ==============================
-# Add DBServlet.java (JDBC Example)
+# Create DBServlet.java
 # ==============================
 cat << 'EOL' > src/main/java/com/example/DBServlet.java
 package com.example;
@@ -173,7 +157,11 @@ public class DBServlet extends HttpServlet {
         response.setContentType("text/html");
         PrintWriter out = response.getWriter();
 
-        try (Connection conn = DriverManager.getConnection(JDBC_URL, JDBC_USER, JDBC_PASS)) {
+        try {
+            // Explicitly load MySQL Driver
+            Class.forName("com.mysql.cj.jdbc.Driver");
+
+            Connection conn = DriverManager.getConnection(JDBC_URL, JDBC_USER, JDBC_PASS);
             out.println("<h1>Connected to Database!</h1>");
 
             // Insert sample data
@@ -196,7 +184,7 @@ public class DBServlet extends HttpServlet {
                 }
             }
             out.println("</ul>");
-        } catch (SQLException e) {
+        } catch (Exception e) {
             out.println("<p style='color:red;'>Error: " + e.getMessage() + "</p>");
         }
     }
@@ -245,6 +233,18 @@ mvn clean package -DskipTests
 WAR_FILE=target/DemoApp.war
 
 # ==============================
+# Copy JDBC driver to Tomcat lib
+# ==============================
+echo "===== Copying JDBC driver to Tomcat lib ====="
+MYSQL_JAR=$(find ~/.m2/repository/com/mysql/mysql-connector-j/9.4.0 -name "mysql-connector-j-9.4.0.jar" | head -n 1)
+if [ -f "$MYSQL_JAR" ]; then
+    sudo cp "$MYSQL_JAR" $TOMCAT_DIR/lib/
+    echo "MySQL Connector copied to Tomcat lib."
+else
+    echo "ERROR: MySQL connector JAR not found in Maven repo."
+fi
+
+# ==============================
 # Deploy to Tomcat
 # ==============================
 echo "===== Deploying WAR to Tomcat ====="
@@ -257,5 +257,5 @@ sleep 3
 $TOMCAT_DIR/bin/startup.sh
 
 echo "===== Deployment Complete ====="
-echo "Hello Servlet: http://localhost:8080/DemoApp/hello"
-echo "DB Servlet:    http://localhost:8080/DemoApp/db"
+echo "Visit: http://localhost:8080/DemoApp/hello"
+echo "Visit: http://localhost:8080/DemoApp/db"
